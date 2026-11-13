@@ -5,8 +5,11 @@ Same rules as label.bonstu.site:
 - The password + TOTP code are verified by replaying the standard Odoo 19 web
   login flow server-side; the Odoo web session is logged out right after, so the
   hub never keeps an Odoo session or a password.
-- The hub session is a signed Flask cookie that lasts SESSION_DAYS; the user is
-  re-checked against Odoo once a day so archived accounts lose access.
+- The hub session is a signed Flask cookie that slides: every request re-issues
+  it for another SESSION_DAYS, so people who keep using the hub never have to
+  log in again; only SESSION_DAYS without any visit (or an archived Odoo
+  account, re-checked once a day) ends it. Rotating HUB_SECRET_KEY logs
+  everyone out — keep it stable.
 
 Pending logins (between the password step and the 2FA step) and login rate
 limits live in a small SQLite file so they work across gunicorn workers.
@@ -266,6 +269,7 @@ def init_auth(app: Flask, *, get_odoo: Callable[[], dict],
         SESSION_COOKIE_SAMESITE="Lax",
         SESSION_COOKIE_SECURE=os.environ.get("HUB_COOKIE_SECURE", "1") != "0",
         PERMANENT_SESSION_LIFETIME=timedelta(days=SESSION_DAYS),
+        SESSION_REFRESH_EACH_REQUEST=True,  # sliding expiry, see module docstring
     )
     store = AuthStore(os.environ.get("HUB_AUTH_DB", "/tmp/cs-hub-auth.sqlite3"))
     clock = time.time

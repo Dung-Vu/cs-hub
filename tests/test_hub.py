@@ -251,3 +251,30 @@ def test_login_flow_with_fake_odoo(client, monkeypatch):
     assert client.get("/bien-ban").status_code == 200
     client.get("/logout")
     assert client.get("/bien-ban").status_code == 302
+
+
+def test_session_slides_while_user_stays_active(tmp_path, monkeypatch):
+    import time as time_mod
+    now = [1_800_000_000.0]
+    monkeypatch.setattr(time_mod, "time", lambda: now[0])
+    monkeypatch.setenv("HUB_AUTH_DB", str(tmp_path / "auth.sqlite3"))
+    from flask import Flask
+    app = Flask(__name__, template_folder=str(ROOT / "templates"))
+    hub_auth.init_auth(app, get_odoo=lambda: {}, rpc=FakeOdoo())
+
+    @app.get("/x")
+    def x():
+        return "ok"
+
+    c = app.test_client()
+    with c.session_transaction() as s:
+        s.update(uid=208, name="x", login="x", checked=now[0], _permanent=True)
+    day = 86400
+    # Active user: one visit every 80 days for a year never hits the login page.
+    for _ in range(5):
+        now[0] += 80 * day
+        r = c.get("/x")
+        assert r.status_code == 200 and "hub_session=" in r.headers.get("Set-Cookie", "")
+    # Only a full SESSION_DAYS without any visit ends the session.
+    now[0] += (hub_auth.SESSION_DAYS + 1) * day
+    assert c.get("/x").status_code == 302
