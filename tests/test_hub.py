@@ -55,7 +55,7 @@ def test_safe_next_blocks_open_redirect():
 
 def test_pdf_fetcher_blocks_remote_urls():
     for bad in ("http://169.254.169.254/latest", "file:///etc/passwd",
-                (dr.FONTS_DIR / ".." / "dashboard.html").resolve().as_uri()):
+                (dr.FONTS_DIR / ".." / "hub.html").resolve().as_uri()):
         with pytest.raises(ValueError):
             dr.check_pdf_resource(bad)
     dr.check_pdf_resource("data:image/png;base64,AAAA")
@@ -162,7 +162,8 @@ def test_gate_blocks_anonymous(client):
     assert r.status_code == 302 and "/login?next=/bien-ban" in r.headers["Location"]
     assert client.get("/api/delivery/search?q=O-BG").status_code == 401
     assert client.get("/api/delivery/7/bien-ban.pdf").status_code == 401
-    assert client.get("/api/kpis").status_code == 401
+    r = client.get("/zns/dashboard")
+    assert r.status_code == 302 and "/login" in r.headers["Location"]
     assert client.get("/login").status_code == 200
 
 
@@ -278,3 +279,63 @@ def test_session_slides_while_user_stays_active(tmp_path, monkeypatch):
     # Only a full SESSION_DAYS without any visit ends the session.
     now[0] += (hub_auth.SESSION_DAYS + 1) * day
     assert c.get("/x").status_code == 302
+
+
+def _zns_app(tmp_path, monkeypatch, fetch):
+    import zns_proxy
+    monkeypatch.setenv("HUB_AUTH_DB", str(tmp_path / "auth.sqlite3"))
+    from flask import Flask
+    app = Flask(__name__, template_folder=str(ROOT / "templates"))
+    hub_auth.init_auth(app, get_odoo=lambda: {}, rpc=FakeOdoo())
+    app.register_blueprint(zns_proxy.create_blueprint(fetch))
+    c = app.test_client()
+    login(c)
+    return c
+
+
+def test_zns_dashboard_is_served_without_second_login(tmp_path, monkeypatch):
+    monkeypatch.setenv("ZNS_ADMIN_API_KEY", "k" * 40)
+    seen = {}
+
+    def fetch(query):
+        seen.update(query)
+        return 200, "<html><body class='x'><h1>ZNS Dashboard</h1></body></html>".encode()
+
+    c = _zns_app(tmp_path, monkeypatch, fetch)
+    r = c.get("/zns/dashboard?from_date=2026-11-01&template_type=rating&evil=1")
+    page = r.get_data(as_text=True)
+    assert r.status_code == 200 and "ZNS Dashboard" in page and "← CS Hub" in page
+    assert page.index("<body class='x'>") < page.index("← CS Hub")
+    assert seen == {"from_date": "2026-11-01", "template_type": "rating"}
+    assert "k" * 40 not in page and r.headers["Cache-Control"] == "no-store"
+
+
+def test_zns_dashboard_upstream_failure_and_missing_key(tmp_path, monkeypatch):
+    monkeypatch.setenv("ZNS_ADMIN_API_KEY", "k" * 40)
+    c = _zns_app(tmp_path, monkeypatch, lambda q: (401, b""))
+    assert c.get("/zns/dashboard").status_code == 502
+    monkeypatch.delenv("ZNS_ADMIN_API_KEY")
+    assert c.get("/zns/dashboard").status_code == 503
+
+
+def test_fetch_dashboard_sends_basic_auth(monkeypatch):
+    import zns_proxy
+    monkeypatch.setenv("ZNS_ADMIN_API_KEY", "secret-key")
+    monkeypatch.setenv("ZNS_UPSTREAM_URL", "https://zns.invalid/")
+    captured = {}
+
+    class Resp:
+        status = 200
+        def read(self): return b"ok"
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    def fake_urlopen(req, timeout):
+        captured["url"], captured["auth"] = req.full_url, req.get_header("Authorization")
+        return Resp()
+
+    monkeypatch.setattr(zns_proxy.urllib.request, "urlopen", fake_urlopen)
+    assert zns_proxy.fetch_dashboard({"to_date": "2026-11-13"}) == (200, b"ok")
+    assert captured["url"] == "https://zns.invalid/zns/dashboard?to_date=2026-11-13"
+    import base64
+    assert base64.b64decode(captured["auth"].split()[1]).decode() == "cs-hub:secret-key"
