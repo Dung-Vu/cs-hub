@@ -232,7 +232,6 @@ def build_report(rpc, conn, picking_id: int) -> dict | None:
             "phone": "028 666 09009",
         },
         "partner": partner,
-        "responsible": _m2o_name(p["user_id"]),
         "note": note,
         "has_fabric_codes": any(it["fabric_code"] for it in items),
         "items": items,

@@ -120,7 +120,7 @@ def test_build_report_mirrors_odoo_template():
     assert r["sender"]["unit"] == "CÔNG TY TNHH NỘI THẤT ORDINAIRE VIỆT NAM"
     assert r["partner"]["salesperson"] == "ORD Sales, VÕ ĐỖ ANH THƯ"
     assert r["partner"]["contact_address"] == "CÔNG TY TNHH KHÁCH HÀNG MẪU\n12 Đường Mẫu\nHCM"
-    assert r["responsible"] == "BON SC, NGUYỄN NGỌC THANH"
+    assert "responsible" not in r
     assert r["note"] == "Giao giờ hành chính"
     assert r["so_name"] == "O-BG-2610-0649"
 
@@ -339,3 +339,9 @@ def test_fetch_dashboard_sends_basic_auth(monkeypatch):
     assert captured["url"] == "https://zns.invalid/zns/dashboard?to_date=2026-11-13"
     import base64
     assert base64.b64decode(captured["auth"].split()[1]).decode() == "cs-hub:secret-key"
+
+
+def test_sender_signature_is_left_blank():
+    html = (ROOT / "templates" / "delivery_report.html").read_text()
+    sign = html[html.index("ĐẠI DIỆN BÊN GIAO"):html.index("ĐẠI DIỆN BÊN NHẬN")]
+    assert "{{" not in sign
