@@ -56,7 +56,7 @@ def get_odoo():
 
 
 _cache: dict[str, tuple[float, Any]] = {}
-CACHE_TTL = 300  # 5 minutes
+CACHE_TTL = 600  # 10 minutes
 
 
 def cached(key: str):
@@ -247,13 +247,6 @@ def compute_complaint_kpis(tickets: list[dict], date_from: str, date_to: str):
     fcr_rate = round(fcr_count / max(len(bg_groups), 1) * 100, 1)
     repeat_rate = round(repeat_tickets / max(total, 1) * 100, 1)
 
-    # Per-brand total counts (used as explicit KPIs in the card).
-    by_brand_count = {"BON": 0, "ORD": 0}
-    for t in complaints:
-        b = brand_of(t.get("team_id"))
-        if b in by_brand_count:
-            by_brand_count[b] += 1
-
     # Top 5 reasons — overall + split by brand
     overall_reasons = Counter()
     reasons_by_brand: dict[str, Counter] = {"BON": Counter(), "ORD": Counter()}
@@ -264,20 +257,15 @@ def compute_complaint_kpis(tickets: list[dict], date_from: str, date_to: str):
         if b in reasons_by_brand:
             reasons_by_brand[b][r] += 1
 
-    # Monthly trend covering exactly the filtered period so the chart x-axis
-    # matches date_from → date_to without 11 empty bars for a 1-month range.
+    # Monthly trend (last 12 months)
     monthly = {}
     monthly_by_brand: dict[str, dict[str, int]] = {"BON": {}, "ORD": {}}
-    start_dt = datetime.strptime(date_from[:7] + "-01", "%Y-%m-%d")
-    end_dt = datetime.strptime(date_to[:7] + "-01", "%Y-%m-%d")
-    cursor = start_dt
-    while cursor <= end_dt:
-        m = cursor.strftime("%Y-%m")
+    current = datetime.strptime(date_to[:7] + "-01", "%Y-%m-%d")
+    for i in range(12):
+        m = (current - timedelta(days=30 * i)).strftime("%Y-%m")
         monthly[m] = 0
         monthly_by_brand["BON"][m] = 0
         monthly_by_brand["ORD"][m] = 0
-        # Advance one calendar month (handles Dec → Jan rollover).
-        cursor = (cursor.replace(day=28) + timedelta(days=4)).replace(day=1)
     for t in complaints:
         m = (t.get("create_date", "") or "")[:7]
         if m in monthly:
@@ -310,7 +298,6 @@ def compute_complaint_kpis(tickets: list[dict], date_from: str, date_to: str):
         "this_month": this_month,
         "last_month": last_month,
         "mom_change": round((this_month - last_month) / max(last_month, 1) * 100, 1) if last_month > 0 else 0,
-        "by_brand_count": by_brand_count,
     }
 
 
@@ -364,13 +351,6 @@ def compute_warranty_kpis(tickets: list[dict], date_from: str, date_to: str):
     first_fix_rate = round(first_fix / max(len(bg_groups), 1) * 100, 1)
     repeat_repair_rate = round(repeat_tickets / max(total, 1) * 100, 1)
 
-    # Per-brand total counts (used as explicit KPIs in the card).
-    by_brand_count = {"BON": 0, "ORD": 0}
-    for t in warranties:
-        b = brand_of(t.get("team_id"))
-        if b in by_brand_count:
-            by_brand_count[b] += 1
-
     # Period-anchored breakdowns (monthly + quarterly) for the FCR/Repeat Rate
     # sub-chart. Empty buckets are zeroed out so x-axes are evenly spaced.
     breakdown = compute_warranty_breakdown(warranties, date_from, date_to)
@@ -385,18 +365,15 @@ def compute_warranty_kpis(tickets: list[dict], date_from: str, date_to: str):
         if b in reasons_by_brand:
             reasons_by_brand[b][r] += 1
 
-    # Monthly trend covering exactly the filtered period.
+    # Monthly trend
     monthly = {}
     monthly_by_brand: dict[str, dict[str, int]] = {"BON": {}, "ORD": {}}
-    start_dt = datetime.strptime(date_from[:7] + "-01", "%Y-%m-%d")
-    end_dt = datetime.strptime(date_to[:7] + "-01", "%Y-%m-%d")
-    cursor = start_dt
-    while cursor <= end_dt:
-        m = cursor.strftime("%Y-%m")
+    current = datetime.strptime(date_to[:7] + "-01", "%Y-%m-%d")
+    for i in range(12):
+        m = (current - timedelta(days=30 * i)).strftime("%Y-%m")
         monthly[m] = 0
         monthly_by_brand["BON"][m] = 0
         monthly_by_brand["ORD"][m] = 0
-        cursor = (cursor.replace(day=28) + timedelta(days=4)).replace(day=1)
     for t in warranties:
         m = (t.get("create_date", "") or "")[:7]
         if m in monthly:
@@ -433,7 +410,6 @@ def compute_warranty_kpis(tickets: list[dict], date_from: str, date_to: str):
         "last_month": last_month,
         "mom_change": round((this_month - last_month) / max(last_month, 1) * 100, 1) if last_month > 0 else 0,
         "breakdown": breakdown,
-        "by_brand_count": by_brand_count,
     }
 
 
@@ -838,56 +814,67 @@ def resolve_date_range(mode: str, params: dict, months: int = 1):
 @app.route("/api/kpis")
 def api_kpis():
     """JSON endpoint: all KPIs."""
-    team = request.args.get("team", "all")  # all, ord, bon
-    mode = request.args.get("mode", "range")  # range | custom
-    months = int(request.args.get("months", "1"))
-    custom_params = {
-        "from": request.args.get("from", ""),
-        "to": request.args.get("to", ""),
-    }
+    try:
+        team = request.args.get("team", "all")  # all, ord, bon
+        mode = request.args.get("mode", "range")  # range | custom
+        months = int(request.args.get("months", "1"))
+        custom_params = {
+            "from": request.args.get("from", ""),
+            "to": request.args.get("to", ""),
+        }
 
-    from_date, to_date, mode, echo = resolve_date_range(mode, custom_params, months)
+        from_date, to_date, mode, echo = resolve_date_range(mode, custom_params, months)
 
-    # Determine team filter
-    team_ids_map = {"ord": [14], "bon": [15], "all": TEAM_IDS}
-    team_ids = team_ids_map.get(team, TEAM_IDS)
+        # Determine team filter
+        team_ids_map = {"ord": [14], "bon": [15], "all": TEAM_IDS}
+        team_ids = team_ids_map.get(team, TEAM_IDS)
 
-    start = time.time()
-    tickets = fetch_tickets(team_ids, from_date, to_date)
+        start = time.time()
+        tickets = fetch_tickets(team_ids, from_date, to_date)
 
-    complaint = compute_complaint_kpis(tickets, from_date, to_date)
-    retention = compute_retention_rate(tickets)
-    warranty = compute_warranty_kpis(tickets, from_date, to_date)
-    csat = compute_csat(tickets)
-    csat_brand = compute_csat_by_brand(tickets, to_date)
-    satisfaction = compute_satisfaction_split(tickets)
-    rates = compute_response_and_order_rate(tickets, to_date)
-    sla = compute_sla(tickets)
+        complaint = compute_complaint_kpis(tickets, from_date, to_date)
+        retention = compute_retention_rate(tickets)
+        warranty = compute_warranty_kpis(tickets, from_date, to_date)
+        csat = compute_csat(tickets)
+        csat_brand = compute_csat_by_brand(tickets, to_date)
+        satisfaction = compute_satisfaction_split(tickets)
+        rates = compute_response_and_order_rate(tickets, to_date)
+        sla = compute_sla(tickets)
 
-    # Fetch delivery orders for on-time + BD metrics
-    delivery_orders = fetch_delivery_orders(from_date, to_date)
+        # Fetch delivery orders for on-time + BD metrics
+        delivery_orders = fetch_delivery_orders(from_date, to_date)
 
-    elapsed = int((time.time() - start) * 1000)
+        elapsed = int((time.time() - start) * 1000)
 
-    return jsonify({
-        "team": team,
-        "mode": mode,
-        "echo": echo,
-        "months": months,
-        "period": f"{from_date[:10]} → {to_date[:10]}",
-        "elapsed_ms": elapsed,
-        "complaints": complaint,
-        "retention": retention,
-        "warranty": warranty,
-        "csat": csat,
-        "csat_by_brand": csat_brand,
-        "satisfaction": satisfaction,
-        "rates": rates,
-        "sla": sla,
-        "purchase": compute_purchase_metrics(months),
-        "delivery": compute_delivery_metrics(delivery_orders),
-        "bd_progress": compute_bd_progress_metrics(delivery_orders),
-    })
+        return jsonify({
+            "team": team,
+            "mode": mode,
+            "echo": echo,
+            "months": months,
+            "period": f"{from_date[:10]} → {to_date[:10]}",
+            "elapsed_ms": elapsed,
+            "complaints": complaint,
+            "retention": retention,
+            "warranty": warranty,
+            "csat": csat,
+            "csat_by_brand": csat_brand,
+            "satisfaction": satisfaction,
+            "rates": rates,
+            "sla": sla,
+            "purchase": compute_purchase_metrics(months),
+            "delivery": compute_delivery_metrics(delivery_orders),
+            "bd_progress": compute_bd_progress_metrics(delivery_orders),
+        })
+    except Exception as exc:
+        # Return user-friendly error instead of raw exception trace
+        err_str = str(exc)
+        is_rate_limited = "429" in err_str or "Too Many Requests" in err_str
+        status_code = 429 if is_rate_limited else 503
+        return jsonify({
+            "error": "Odoo đang quá tải, vui lòng thử lại sau." if is_rate_limited
+                     else "Không thể kết nối Odoo. Vui lòng thử lại sau.",
+            "detail": err_str,
+        }), status_code
 
 
 def fetch_delivery_orders(from_date: str, to_date: str) -> list[dict]:
