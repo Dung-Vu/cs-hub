@@ -27,7 +27,7 @@ from openpyxl.utils import get_column_letter
 
 BASE_DIR = Path(__file__).parent.parent
 sys.path.insert(0, str(Path(__file__).parent))
-from odoo_core import connect_rpc, search_read, search_count
+from odoo_core import connect_rpc, rpc_execute, search_read, search_count
 
 ENV_PATH = BASE_DIR / ".env"
 TEMPLATES_DIR = str(BASE_DIR / "templates")
@@ -743,9 +743,19 @@ def _cs_user_ids(conn) -> set[int]:
 
 # ── Routes ───────────────────────────────────────────────────────────────────
 
+ZNS_DASHBOARD_URL = os.environ.get(
+    "ZNS_DASHBOARD_URL", "https://workflow.bonstu.site/zns/dashboard")
+
+
 @app.route("/")
+def hub_home():
+    """CS Hub home: one link to every CS tool."""
+    return render_template("hub.html", zns_dashboard_url=ZNS_DASHBOARD_URL)
+
+
+@app.route("/dashboard")
 def index():
-    """Main dashboard page."""
+    """CS KPI dashboard page."""
     return render_template("dashboard.html")
 
 
@@ -1598,8 +1608,18 @@ def api_export_pdf():
     )
 
 
+# ── CS Hub: login gate + delivery report ─────────────────────────────────────
+
+load_env()
+from hub_auth import init_auth  # noqa: E402
+from delivery_report import create_blueprint as create_delivery_blueprint  # noqa: E402
+
+init_auth(app, get_odoo=get_odoo, rpc=rpc_execute)
+app.register_blueprint(create_delivery_blueprint(get_odoo, rpc_execute))
+
+
 # ── Main ────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    print("CS Dashboard — http://localhost:5100")
+    print("CS Hub — http://localhost:5100")
     app.run(host="0.0.0.0", port=5100, debug=True)

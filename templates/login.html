@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Đăng nhập · CS Hub</title>
+{% include "_hub_style.html" %}
+<style>
+.wrap { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
+.box { width: 100%; max-width: 400px; padding: 32px; }
+.box h1 { font-size: 1.5rem; letter-spacing: -0.02em; margin-top: 16px; }
+.box .sub { margin: 6px 0 22px; color: var(--text-2); font-size: 0.875rem; line-height: 1.5; }
+.box label { display: block; font-size: 0.8125rem; font-weight: 600; margin: 14px 0 6px; color: var(--text-2); }
+.box .btn { width: 100%; margin-top: 20px; }
+.box .alert { margin-top: 16px; }
+.box .back { all: unset; cursor: pointer; display: block; margin-top: 14px; text-align: center; font-size: 0.8125rem; color: var(--muted); }
+#code { letter-spacing: 0.4em; text-align: center; font-size: 1.25rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card box">
+    <span class="hub-brand"><span class="dot">CS</span><span>CS Hub</span></span>
+
+    <form id="step-password" autocomplete="on">
+      <h1>Đăng nhập</h1>
+      <p class="sub">Dùng tài khoản Odoo của bạn. Tài khoản cần bật xác thực 2 lớp (2FA).</p>
+      <label for="login">Email Odoo</label>
+      <input class="field" id="login" name="username" type="email" autocomplete="username" required autofocus>
+      <label for="password">Mật khẩu</label>
+      <input class="field" id="password" name="password" type="password" autocomplete="current-password" required>
+      <button class="btn" type="submit">Tiếp tục</button>
+    </form>
+
+    <form id="step-totp" hidden>
+      <h1>Xác thực 2 lớp</h1>
+      <p class="sub">Nhập mã 6 số trong ứng dụng xác thực (Google Authenticator…) đang gắn với tài khoản Odoo.</p>
+      <label for="code">Mã xác thực</label>
+      <input class="field" id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="\d{6}" required>
+      <button class="btn" type="submit">Đăng nhập</button>
+      <button class="back" type="button" id="back">← Nhập lại mật khẩu</button>
+    </form>
+
+    <div class="alert error" id="error" hidden></div>
+  </div>
+</div>
+<script>
+const $ = (id) => document.getElementById(id);
+const next = new URLSearchParams(location.search).get('next') || '/';
+function showError(msg) { $('error').textContent = msg; $('error').hidden = !msg; }
+async function post(url, body) {
+  const resp = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin', body: JSON.stringify(body) });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw Object.assign(new Error(data.error || 'Có lỗi xảy ra, vui lòng thử lại.'), { code: data.code });
+  return data;
+}
+async function withBusy(form, fn) {
+  const btn = form.querySelector('button[type=submit]');
+  btn.disabled = true; showError('');
+  try { await fn(); } catch (e) { showError(e.message); return e; } finally { btn.disabled = false; }
+}
+$('step-password').addEventListener('submit', (ev) => {
+  ev.preventDefault();
+  withBusy(ev.target, async () => {
+    await post('/api/auth/login', { login: $('login').value, password: $('password').value });
+    $('password').value = '';
+    $('step-password').hidden = true; $('step-totp').hidden = false; $('code').focus();
+  });
+});
+$('step-totp').addEventListener('submit', (ev) => {
+  ev.preventDefault();
+  withBusy(ev.target, async () => {
+    try {
+      const data = await post('/api/auth/totp', { code: $('code').value, next });
+      location.href = data.next || '/';
+    } catch (e) {
+      $('code').value = '';
+      if (['pending_expired', 'too_many_attempts', 'session_expired'].includes(e.code)) {
+        $('step-totp').hidden = true; $('step-password').hidden = false;
+      }
+      throw e;
+    }
+  });
+});
+$('back').addEventListener('click', () => {
+  $('step-totp').hidden = true; $('step-password').hidden = false; showError('');
+});
+</script>
+</body>
+</html>

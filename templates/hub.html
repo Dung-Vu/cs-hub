@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CS Hub · Bonario</title>
+{% include "_hub_style.html" %}
+<style>
+.hero { padding: 24px 4px 32px; }
+.hero h1 { font-size: clamp(1.75rem, 4vw, 2.5rem); letter-spacing: -0.025em; }
+.hero p { margin-top: 8px; color: var(--text-2); }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; }
+.tile {
+  display: flex; flex-direction: column; gap: 12px; padding: 24px; text-decoration: none;
+  transition: transform .2s, box-shadow .2s, border-color .2s;
+}
+.tile:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); border-color: var(--border-strong); }
+.tile .icon { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; font-size: 1.375rem; }
+.tile h2 { font-size: 1.125rem; letter-spacing: -0.01em; }
+.tile p { font-size: 0.875rem; color: var(--text-2); line-height: 1.5; }
+.tile .go { margin-top: auto; font-size: 0.8125rem; font-weight: 600; color: var(--accent); }
+.tile.teal .icon { background: var(--accent-tint); }
+.tile.blue .icon { background: var(--blue-soft); }
+.tile.purple .icon { background: var(--purple-soft); }
+</style>
+</head>
+<body>
+{% include "_hub_bar.html" %}
+<main class="hub">
+  <section class="hero">
+    <h1>Chào {{ current_user.name.split(',')[-1].strip() if current_user else 'bạn' }} 👋</h1>
+    <p>Mọi công cụ của phòng CS trong một trang.</p>
+  </section>
+  <section class="tiles">
+    <a class="card tile purple" href="/bien-ban">
+      <span class="icon">🧾</span>
+      <h2>In biên bản bàn giao &amp; nghiệm thu</h2>
+      <p>Dán mã đơn bán hoặc mã phiếu giao, chọn phiếu phù hợp và in biên bản — không cần quyền vào phiếu giao hàng.</p>
+      <span class="go">Mở →</span>
+    </a>
+    <a class="card tile teal" href="/dashboard">
+      <span class="icon">📊</span>
+      <h2>Dashboard CS</h2>
+      <p>KPI chăm sóc khách hàng: khiếu nại, bảo hành, CSAT, SLA, giao hàng đúng hẹn.</p>
+      <span class="go">Mở →</span>
+    </a>
+    <a class="card tile blue" href="{{ zns_dashboard_url }}" target="_blank" rel="noopener">
+      <span class="icon">💬</span>
+      <h2>Dashboard ZNS</h2>
+      <p>Theo dõi tin Zalo ZNS đã gửi khách: hướng dẫn sử dụng, đánh giá, trạng thái nhận tin.</p>
+      <span class="go">Mở trong tab mới ↗</span>
+    </a>
+  </section>
+</main>
+</body>
+</html>

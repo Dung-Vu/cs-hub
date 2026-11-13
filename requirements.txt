@@ -2,4 +2,4 @@ pyyaml>=6.0
 flask>=3.0
 gunicorn>=22.0
 openpyxl>=3.1
-weasyprint>=60.0
+weasyprint>=70,<71
