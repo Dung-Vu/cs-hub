@@ -146,14 +146,51 @@ def connect_rpc(profile_name: str, config_path: str | None = None) -> dict:
     }
 
 
-# ── RPC Execution ────────────────────────────────────────────────────────────
+# ── Retry Configuration ──────────────────────────────────────────────────────
+
+import time as _time
+import logging as _logging
+
+_rpc_logger = _logging.getLogger(__name__)
+
+_MAX_RETRIES = 3
+_RETRY_BASE_DELAY = 10  # seconds
+_RETRY_BACKOFF = 2
+
+_RETRYABLE_SUBSTRINGS = [
+    "429", "Too Many Requests", "Connection refused", "timed out",
+    "Read timed out", "IncompleteRead", "Bad Gateway", "502", "503",
+    "Service Unavailable", "Connection reset", "Name or service not known",
+]
+
+
+def _is_retryable(exc: Exception) -> bool:
+    """Check if an exception is transient and safe to retry."""
+    msg = str(exc).lower()
+    return any(s.lower() in msg for s in _RETRYABLE_SUBSTRINGS)
+
 
 def rpc_execute(conn: dict, model: str, method: str, *args, **kwargs) -> any:
-    """Generic execute_kw wrapper."""
-    return conn["models"].execute_kw(
-        conn["db"], conn["uid"], conn["api_key"],
-        model, method, list(args), dict(kwargs),
-    )
+    """Generic execute_kw wrapper with retry + exponential backoff."""
+    last_exc = None
+    for attempt in range(_MAX_RETRIES + 1):
+        try:
+            return conn["models"].execute_kw(
+                conn["db"], conn["uid"], conn["api_key"],
+                model, method, list(args), dict(kwargs),
+            )
+        except Exception as e:
+            last_exc = e
+            if attempt < _MAX_RETRIES and _is_retryable(e):
+                delay = _RETRY_BASE_DELAY * (_RETRY_BACKOFF ** attempt)
+                _rpc_logger.warning(
+                    f"[Odoo] {model}.{method} failed (attempt {attempt + 1}/{_MAX_RETRIES + 1}): "
+                    f"{e} — retrying in {delay}s"
+                )
+                _time.sleep(delay)
+            else:
+                raise
+    raise last_exc
 
 
 def search_read(conn: dict, model: str, domain: list, fields: list | None = None, limit: int | None = None, offset: int | None = None) -> list:

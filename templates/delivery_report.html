@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+{#- Mirrors the Odoo report "Biên bản bàn giao & Nghiệm thu" (Studio view 5984,
+    paper format "A4 - BBBG Compact": margins 12/7 mm). Keep both in sync. -#}
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<title>Biên bản bàn giao {{ r.picking_name }}</title>
+<style>
+@font-face { font-family: 'Montserrat'; font-weight: 400; src: url('{{ fonts_url }}/Montserrat-Regular.ttf'); }
+@font-face { font-family: 'Montserrat'; font-weight: 700; src: url('{{ fonts_url }}/Montserrat-Bold.ttf'); }
+@page { size: A4 portrait; margin: 12mm 7mm; }
+body { font-family: 'Montserrat', sans-serif; font-size: 12px; color: #000; margin: 0; line-height: 1.35; }
+p { margin: 0 0 8px 0; }
+.bb-table { width: 100%; border-collapse: collapse; margin: 8px 0; }
+.bb-table th, .bb-table td { border: 1px solid #000; padding: 5px 6px; vertical-align: top; }
+.bb-table th { text-align: center; vertical-align: middle; font-weight: bold; }
+.bb-table thead { display: table-header-group; }
+.bb-table tr { page-break-inside: avoid; }
+.bb-heading { font-weight: bold; margin-top: 12px; margin-bottom: 4px; }
+.bb-title { position: relative; min-height: 72px; margin: 0 0 8px 0; }
+.bb-logo { position: absolute; left: 0; top: 0; display: block; max-height: 64px; max-width: 185px; }
+.bb-title-text { margin: 0; padding-top: 14px; text-align: center; font-size: 24px; font-weight: bold; }
+.bb-sign { width: 100%; border: 1px solid #ccc; margin-top: 18px; page-break-inside: avoid; border-collapse: collapse; }
+.bb-sign td { border: none; text-align: center; width: 50%; padding: 10px 6px; vertical-align: top; }
+.pre { white-space: pre-line; }
+.center { text-align: center; }
+</style>
+</head>
+<body>
+  <div class="bb-title">
+    {% if r.logo %}<img src="{{ r.logo }}" class="bb-logo" alt="{{ r.company_name }}">{% endif %}
+    <div class="bb-title-text">BIÊN BẢN BÀN GIAO &amp; NGHIỆM THU</div>
+  </div>
+  <p><strong>Ngày: </strong>{{ r.print_date }}</p>
+  {% if r.so_name %}<p><strong>Mã đơn hàng (SO): </strong>{{ r.so_name }}</p>{% endif %}
+
+  <div class="bb-heading">I. THÔNG TIN CÁC BÊN</div>
+  <table class="bb-table">
+    <tr>
+      <th style="width: 18%;">Nội dung</th>
+      <th style="width: 41%;">Bên giao</th>
+      <th style="width: 41%;">Bên nhận</th>
+    </tr>
+    <tr><td>Đơn vị</td><td>{{ r.sender.unit }}</td><td>{{ r.partner.display_name }}</td></tr>
+    <tr><td>Địa chỉ</td><td>{{ r.sender.address }}</td><td class="pre">{{ r.partner.contact_address }}</td></tr>
+    <tr><td>Số điện thoại</td><td>{{ r.sender.phone }}</td><td>{{ r.partner.phone }}</td></tr>
+    <tr><td>Tư vấn viên</td><td>{{ r.partner.salesperson }}</td><td></td></tr>
+  </table>
+
+  <div class="bb-heading">II. DANH MỤC HÀNG HÓA BÀN GIAO</div>
+  <div>Tiến hành giao nhận các mặt hàng như sau: <span class="pre">{{ r.note }}</span></div>
+  <table class="bb-table">
+    <thead>
+      <tr>
+        <th style="width: 5%;">STT</th>
+        <th>Tên</th>
+        <th>Hình ảnh</th>
+        <th>Thông tin chi tiết</th>
+        {% if r.has_fabric_codes %}<th>Mã vải</th><th>Hình ảnh vải</th>{% endif %}
+        <th style="width: 10%;">Số lượng</th>
+        <th style="width: 10%;">Ghi chú</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for it in r["items"] %}
+      <tr>
+        <td class="center">{{ it.index }}</td>
+        <td>{{ it.product }}</td>
+        <td class="center">
+          {% if it.image %}<img src="{{ it.image }}" style="max-height: 150px; max-width: 150px;">{% else %}No Image{% endif %}
+        </td>
+        <td class="pre">{{ it.details }}</td>
+        {% if r.has_fabric_codes %}
+        <td class="center">{{ it.fabric_code }}</td>
+        <td class="center">{% if it.fabric_image %}<img src="{{ it.fabric_image }}" style="max-height: 80px; max-width: 80px;">{% endif %}</td>
+        {% endif %}
+        <td class="center">{{ it.quantity }}</td>
+        <td class="pre">{{ it.note }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <p style="margin-top: 12px;"><i>Biên bản lập thành 02 bản, mỗi bên giữ 01 bản.</i></p>
+
+  <table class="bb-sign">
+    <tr>
+      <td>
+        <strong>ĐẠI DIỆN BÊN GIAO</strong><br><em>(Ký, ghi rõ họ tên)</em><br><br><br><br>
+        ________________________<br>
+        {{ r.responsible }}
+      </td>
+      <td>
+        <strong>ĐẠI DIỆN BÊN NHẬN</strong><br><em>(Ký, ghi rõ họ tên)</em><br><br><br><br>
+        ________________________<br>
+        {{ r.partner.name }}
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>In biên bản bàn giao · CS Hub</title>
+{% include "_hub_style.html" %}
+<style>
+.crumb { font-size: 0.8125rem; color: var(--muted); margin: 4px 4px 14px; }
+.crumb a { text-decoration: none; }
+.crumb a:hover { color: var(--text); }
+.search { padding: 24px; }
+.search h1 { font-size: 1.375rem; letter-spacing: -0.02em; }
+.search p { margin: 6px 0 18px; color: var(--text-2); font-size: 0.875rem; }
+.search form { display: flex; gap: 10px; }
+.search form .field { flex: 1; }
+#status { margin-top: 16px; }
+.results { margin-top: 18px; overflow: hidden; }
+.results table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+.results th { text-align: left; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); padding: 12px 16px; background: var(--surface-2); border-bottom: 1px solid var(--border); }
+.results td { padding: 14px 16px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.results tr:last-child td { border-bottom: none; }
+.results .code { font-weight: 700; }
+.results .sub { font-size: 0.75rem; color: var(--muted); margin-top: 2px; }
+.results .actions { white-space: nowrap; text-align: right; }
+.results .actions .btn + .btn { margin-left: 6px; }
+.badge { display: inline-block; padding: 3px 10px; border-radius: var(--r-pill); font-size: 0.75rem; font-weight: 600; white-space: nowrap; }
+.badge.done { background: var(--green-soft); color: var(--green); }
+.badge.assigned { background: var(--blue-soft); color: var(--blue); }
+.badge.waiting, .badge.confirmed, .badge.draft { background: var(--amber-soft); color: var(--amber); }
+.badge.cancel { background: var(--red-soft); color: var(--red); }
+@media (max-width: 760px) {
+  .search form { flex-direction: column; }
+  .results thead { display: none; }
+  .results tr { display: block; padding: 12px 4px; border-bottom: 1px solid var(--border); }
+  .results td { display: block; border: none; padding: 4px 12px; }
+  .results .actions { text-align: left; padding-top: 10px; }
+}
+</style>
+</head>
+<body>
+{% include "_hub_bar.html" %}
+<main class="hub">
+  <div class="crumb"><a href="/">CS Hub</a> / In biên bản</div>
+  <section class="card search">
+    <h1>🧾 In biên bản bàn giao &amp; nghiệm thu</h1>
+    <p>Dán mã đơn bán (vd <b>O-BG-2610-0649</b>) hoặc mã phiếu giao (vd <b>O-MID/OUT/00473</b>), rồi chọn phiếu cần in.</p>
+    <form id="search-form">
+      <input class="field" id="q" placeholder="Mã đơn bán hoặc mã phiếu giao" autocomplete="off" autofocus required minlength="3">
+      <button class="btn" type="submit">Tìm phiếu</button>
+    </form>
+    <div id="status" hidden></div>
+  </section>
+
+  <section class="card results" id="results" hidden>
+    <table>
+      <thead>
+        <tr><th>Phiếu giao</th><th>Khách hàng</th><th>Ngày giao</th><th>Trạng thái</th><th></th></tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+function setStatus(kind, msg) {
+  const el = $('status');
+  el.className = 'alert ' + kind; el.textContent = msg; el.hidden = !msg;
+}
+
+function row(r) {
+  const pdf = `/api/delivery/${r.id}/bien-ban.pdf`;
+  const date = r.date_done
+    ? `${esc(r.date_done)}<div class="sub">Đã giao</div>`
+    : `${esc(r.scheduled_date)}<div class="sub">Dự kiến</div>`;
+  const actions = r.printable
+    ? `<a class="btn small" href="${pdf}" target="_blank" rel="noopener">🖨️ Xem &amp; in</a><a class="btn small ghost" href="${pdf}?download=1">Tải PDF</a>`
+    : `<span class="muted">Phiếu đã huỷ</span>`;
+  return `<tr>
+    <td><div class="code">${esc(r.name)}</div><div class="sub">Đơn ${esc(r.sale_order)} · ${r.item_count} dòng hàng</div></td>
+    <td>${esc(r.customer)}<div class="sub">${esc(r.company)}</div></td>
+    <td>${date}</td>
+    <td><span class="badge ${esc(r.state)}">${esc(r.state_label)}</span></td>
+    <td class="actions">${actions}</td>
+  </tr>`;
+}
+
+async function search(q) {
+  const btn = document.querySelector('#search-form button');
+  btn.disabled = true; setStatus('info', 'Đang tìm phiếu…'); $('results').hidden = true;
+  try {
+    const resp = await fetch('/api/delivery/search?q=' + encodeURIComponent(q), { credentials: 'same-origin' });
+    if (resp.status === 401) { location.href = '/login?next=' + encodeURIComponent(location.pathname + location.search); return; }
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) { setStatus('error', data.error || 'Có lỗi xảy ra, vui lòng thử lại.'); return; }
+    if (!data.results.length) { setStatus('info', `Không tìm thấy phiếu giao nào khớp "${q}".`); return; }
+    const more = data.results.length >= data.limit ? ` (hiện ${data.limit} phiếu mới nhất — nhập mã đầy đủ hơn để lọc)` : '';
+    setStatus('', '');
+    $('rows').innerHTML = data.results.map(row).join('');
+    $('results').hidden = false;
+    if (more) setStatus('info', `Tìm thấy nhiều phiếu${more}.`);
+  } catch (e) {
+    setStatus('error', 'Không kết nối được máy chủ, vui lòng thử lại.');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+$('search-form').addEventListener('submit', (ev) => {
+  ev.preventDefault();
+  const q = $('q').value.trim();
+  history.replaceState(null, '', '?q=' + encodeURIComponent(q));
+  search(q);
+});
+const initial = new URLSearchParams(location.search).get('q');
+if (initial) { $('q').value = initial; search(initial); }
+</script>
+</body>
+</html>

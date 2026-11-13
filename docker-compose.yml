@@ -1,7 +1,7 @@
 services:
-  cs-dashboard:
+  cs-hub:
     build: .
-    container_name: cs-dashboard
+    container_name: cs-hub
     restart: unless-stopped
     ports:
       - "5100:5100"
@@ -9,6 +9,13 @@ services:
       - ./.env:/app/.env:ro
     environment:
       - PYTHONUNBUFFERED=1
+      - HUB_AUTH_DB=/app/data/auth.sqlite3
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5100/api/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
     logging:
       driver: "json-file"
       options:
