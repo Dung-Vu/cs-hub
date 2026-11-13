@@ -1,3 +1,5 @@
+name: cs-hub  # fixed project name: deploys work regardless of the folder name
+
 services:
   cs-hub:
     build: .
