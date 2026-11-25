@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+{#- BIÊN BẢN BÀN GIAO VÀ NGHIỆM THU rebuilt from a Sales quotation PDF
+    (layout follows the BBNT form Sales already use). -#}
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<title>Biên bản bàn giao và nghiệm thu</title>
+<style>
+@font-face { font-family: 'Montserrat'; font-weight: 400; src: url('{{ fonts_url }}/Montserrat-Regular.ttf'); }
+@font-face { font-family: 'Montserrat'; font-weight: 700; src: url('{{ fonts_url }}/Montserrat-Bold.ttf'); }
+@page { size: A4 {{ orientation }}; margin: 10mm 8mm; }
+body { font-family: 'Montserrat', sans-serif; font-size: 9px; color: #1f3864; margin: 0; line-height: 1.4; }
+p { margin: 0; }
+b, strong { font-weight: 700; }
+.head { width: 100%; border-collapse: collapse; }
+.head td { vertical-align: middle; padding: 0; }
+.head .logo { width: 24%; text-align: center; }
+.head .logo img { max-height: 70px; max-width: 150px; }
+.head .co { font-weight: 700; font-size: 8px; }
+.head .co .web { color: #833c0b; text-decoration: underline; font-weight: 400; }
+.title { text-align: center; font-size: 19px; font-weight: 700; color: #002060; margin: 12px 0 2px; }
+.cat { text-align: center; font-size: 11px; font-weight: 700; color: #c55a11; margin-bottom: 14px; }
+.intro { font-weight: 700; margin-bottom: 10px; }
+.party { border-collapse: collapse; font-weight: 700; margin-bottom: 12px; }
+.party td { padding: 0 14px 0 0; vertical-align: top; }
+.cust { width: 100%; border-collapse: collapse; font-weight: 700; font-size: 9.5px; margin-bottom: 8px; }
+.cust td { border-bottom: 1px solid #000; padding: 2px 0; }
+.cust tr:first-child td { border-bottom: 1px solid #000; }
+.grid { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 7.5px; margin-bottom: 6px; color: #000; }
+.grid th, .grid td { border: 1px solid #7f7f7f; padding: 3px 2px; text-align: center; vertical-align: middle; word-wrap: break-word; }
+.grid .sec th { background: #c55a11; color: #fff; font-size: 10px; letter-spacing: .02em; border-color: #c55a11; }
+.grid thead .lab th { background: #fbe4d5; color: #1f3864; font-weight: 700; }
+.grid thead { display: table-header-group; }
+.grid tr { page-break-inside: avoid; }
+.grid td { height: 54px; }
+.grid td.first { font-weight: 700; font-style: italic; text-align: left; }
+.grid img { max-width: 100%; max-height: 72px; }
+.close { font-weight: 700; margin-top: 4px; }
+.close p { margin: 0 0 2px; }
+.close .h { margin-top: 10px; }
+.sign { width: 100%; border-collapse: collapse; margin-top: 16px; page-break-inside: avoid; }
+.sign td { width: 50%; text-align: center; font-weight: 700; vertical-align: top; padding-bottom: 80px; }
+</style>
+</head>
+<body>
+  <table class="head">
+    <tr>
+      <td class="logo">{% if q.logo %}<img src="{{ q.logo }}" alt="logo">{% endif %}</td>
+      <td class="co">
+        {% for ln in q.company_lines %}
+        <div{% if ln.startswith('www') or ln.startswith('http') %} class="web"{% endif %}>{{ ln }}</div>
+        {% endfor %}
+      </td>
+    </tr>
+  </table>
+
+  <div class="title">BIÊN BẢN BÀN GIAO VÀ NGHIỆM THU</div>
+  {% if q.category %}<div class="cat">Hạng mục: {{ q.category }}</div>{% endif %}
+
+  <p class="intro">Hôm nay, ngày ……. tháng ……. năm {{ q.year }}, đại diện hai bên gồm:</p>
+
+  <table class="party">
+    <tr><td>Bên cung cấp:</td><td>{{ q.company.legal_name }}</td></tr>
+    <tr><td>Địa chỉ:</td><td>{{ q.company.address }}</td></tr>
+    <tr><td>Số điện thoại:</td><td>{{ q.company.phone }}</td></tr>
+    <tr><td>Mã số thuế:</td><td>{{ q.company.vat }}</td></tr>
+    <tr><td colspan="2">(Sau đây gọi tắt là BÊN A)</td></tr>
+  </table>
+
+  <table class="cust">
+    <tr><td>Khách hàng: {{ q.info.customer }}</td></tr>
+    <tr><td>Địa chỉ công trình: {{ q.info.address }}</td></tr>
+    <tr><td>Số điện thoại: {{ q.info.phone }}</td></tr>
+  </table>
+
+  {% for s in q.sections %}
+  <table class="grid">
+    <colgroup>{% for w in s.widths %}<col style="width: {{ w }}%">{% endfor %}</colgroup>
+    <thead>
+      {% if s.title %}<tr class="sec"><th colspan="{{ s.widths|length }}">{{ s.title }}</th></tr>{% endif %}
+      <tr class="lab">
+        {% for h in s.header %}<th{% if h.colspan > 1 %} colspan="{{ h.colspan }}"{% endif %}{% if h.rowspan > 1 %} rowspan="{{ h.rowspan }}"{% endif %}>{{ h.text }}</th>{% endfor %}
+      </tr>
+      {% if s.sub_header %}
+      <tr class="lab">{% for h in s.sub_header %}<th>{{ h }}</th>{% endfor %}</tr>
+      {% endif %}
+    </thead>
+    <tbody>
+      {% for row in s.rows %}
+      <tr>
+        {% for c in row %}<td{% if loop.first %} class="first"{% endif %}{% if c.colspan > 1 %} colspan="{{ c.colspan }}"{% endif %}>{% if c.image %}<img src="{{ c.image }}" alt="">{% endif %}{% if c.text %}{% if c.image %}<br>{% endif %}{{ c.text }}{% endif %}</td>{% endfor %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endfor %}
+
+  <div class="close">
+    <p>Bên A đã thi công và bàn giao đầy đủ hàng hóa theo danh mục được liệt kê trong bảng phía trên.</p>
+    <p>Bên B đồng ý nghiệm thu khối lượng hàng hóa đã liệt kê trong biên bản này.</p>
+    <p class="h">KẾT LUẬN</p>
+    <p>Hai Bên đồng ý nghiệm thu hàng hóa được liệt kê trong biên bản này</p>
+    <p>Bên B có trách nhiệm thanh toán giá trị còn lại cho Bên A</p>
+    <p>Biên Bản Nghiệm thu này được lập thành 02 (hai) bản, mỗi Bên giữ 01 (một) bản có giá trị pháp lý ngang nhau</p>
+  </div>
+
+  <table class="sign">
+    <tr><td>NHÂN VIÊN PHỤ TRÁCH BÊN A</td><td>BÊN B</td></tr>
+  </table>
+</body>
+</html>
