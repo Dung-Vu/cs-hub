@@ -76,7 +76,7 @@ function row(r) {
     ? `${esc(r.date_done)}<div class="sub">Đã giao</div>`
     : `${esc(r.scheduled_date)}<div class="sub">Dự kiến</div>`;
   const actions = r.printable
-    ? `<a class="btn small" href="${pdf}" target="_blank" rel="noopener">🖨️ Xem &amp; in</a><a class="btn small ghost" href="${pdf}?download=1">Tải PDF</a>`
+    ? `<a class="btn small" href="${pdf}" target="_blank" rel="noopener">🖨️ Bàn giao</a><a class="btn small" href="${pdf}?mau=dan-tuong" target="_blank" rel="noopener" title="Biên bản nghiệm thu – vật liệu dán tường (mẫu cũ)">🧱 Nghiệm thu dán tường</a><a class="btn small ghost" href="${pdf}?download=1">Tải PDF</a>`
     : `<span class="muted">Phiếu đã huỷ</span>`;
   return `<tr>
     <td><div class="code">${esc(r.name)}</div><div class="sub">Đơn ${esc(r.sale_order)} · ${r.item_count} dòng hàng</div></td>

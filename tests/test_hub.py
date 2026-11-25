@@ -104,6 +104,9 @@ class FakeOdoo:
         if model == "sale.order.line":
             return [{"id": 11, "name": "ORD-SOFA-MILD\nVải LIBERTY 2", "x_studio_fabric_codes": [9, "LIBERTY 2"]},
                     {"id": 12, "name": "ORD-ARMCHAIR-MILD", "x_studio_fabric_codes": False}]
+        if model == "sale.order":
+            return [{"id": 5506, "origin": "GDT - Căn hộ mẫu", "user_id": [148, "BON Sales, NHÂN VIÊN MẪU"],
+                     "x_studio_phone": "0900 000 000"}]
         if model == "x_fabric_codes":
             return [{"id": 9, "display_name": "LIBERTY 2", "x_studio_image": PNG_1PX}]
         raise AssertionError(f"unexpected {model}.{method}")
@@ -345,3 +348,31 @@ def test_sender_signature_is_left_blank():
     html = (ROOT / "templates" / "delivery_report.html").read_text()
     sign = html[html.index("ĐẠI DIỆN BÊN GIAO"):html.index("ĐẠI DIỆN BÊN NHẬN")]
     assert "{{" not in sign
+
+
+def test_roll_spec_and_vendor_name():
+    assert dr.roll_spec("Quy cách:0.7 x 10 m - non woven") == {
+        "width": "0,7 m", "length": "10 m", "area": "7 m²", "repeat": ""}
+    assert dr.roll_spec("", "Khổ 0,53m x 10,05m\nĐộ lặp hoa văn: 64 cm")["repeat"] == "64 cm"
+    assert dr.roll_spec("không có quy cách")["width"] == ""
+    assert dr.vendor_name("SANGETSU GOODRICH (0.0 m - 0 ₫)") == "SANGETSU GOODRICH"
+    assert dr.vendor_name(False) == ""
+
+
+def test_build_acceptance_fills_old_form_fields():
+    r = dr.build_acceptance(FakeOdoo(), {}, 7)
+    assert r["project"] == "GDT - Căn hộ mẫu"
+    assert r["site_phone"] == "0900 000 000"
+    assert r["salesperson"] == "BON Sales, NHÂN VIÊN MẪU"
+    assert r["site_address"] == "CÔNG TY TNHH KHÁCH HÀNG MẪU\n12 Đường Mẫu\nHCM"  # falls back to partner
+    assert r["items"][2]["uom"] == "Cái" and r["items"][2]["qty"] == "2,00"
+    assert r["items"][0]["code"] == "ORD-COFFEE TABLE-SORA"
+    assert dr.build_acceptance(FakeOdoo(picking_type="incoming"), {}, 7) is None
+
+
+def test_acceptance_pdf_route(client):
+    login(client)
+    pdf = client.get("/api/delivery/7/bien-ban.pdf?mau=dan-tuong&download=1")
+    assert pdf.status_code == 200 and pdf.data[:5] == b"%PDF-"
+    assert "Bien-ban-nghiem-thu-dan-tuong_O-MID-OUT-00473.pdf" in pdf.headers["Content-Disposition"]
+    assert client.get("/api/delivery/7/bien-ban.pdf?mau=khac").status_code == 400

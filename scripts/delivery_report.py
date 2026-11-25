@@ -205,6 +205,10 @@ def build_report(rpc, conn, picking_id: int) -> dict | None:
         product_name = product.get("display_name") or _m2o_name(m["product_id"])
         items.append({
             "index": idx,
+            "product_id": _m2o_id(m["product_id"]),
+            "sale_line_name": sale_line.get("name") or "",
+            "uom": _m2o_name(m["product_uom"]),
+            "qty": format_qty(m["product_uom_qty"] or 0),
             "product": product_name,
             "image": _data_uri(product.get("image_512")),
             "details": item_description(sale_line.get("name") or "",
@@ -232,10 +236,104 @@ def build_report(rpc, conn, picking_id: int) -> dict | None:
             "phone": "028 666 09009",
         },
         "partner": partner,
+        "partner_id": partner_id,
+        "is_ordinaire": is_ordinaire,
         "note": note,
         "has_fabric_codes": any(it["fabric_code"] for it in items),
         "items": items,
     }
+
+
+# ── Biên bản nghiệm thu — vật liệu dán tường (mẫu giấy cũ) ──────────────────
+
+_NUM = r"(\d+(?:[.,]\d+)?)"
+_SPEC_RE = re.compile(_NUM + r"\s*m?\s*[xX×*]\s*" + _NUM + r"\s*m\b")
+_REPEAT_RE = re.compile(r"(?i)(?:lặp|repeat)[^\d\n]{0,20}" + _NUM + r"\s*(cm|mm|m)?")
+
+
+def _num(value: str) -> float:
+    return float(value.replace(",", "."))
+
+
+def _fmt(value: float) -> str:
+    return f"{value:.2f}".rstrip("0").rstrip(".").replace(".", ",")
+
+
+def roll_spec(*texts: str) -> dict:
+    """'Quy cách: 0.7 x 10 m' → rộng khổ / dài cuộn / diện tích cuộn (+ độ lặp hoa văn
+    when written in the text). Empty strings when nothing is written in Odoo."""
+    spec = {"width": "", "length": "", "area": "", "repeat": ""}
+    for text in texts:
+        text = text or ""
+        if not spec["width"] and (m := _SPEC_RE.search(text)):
+            w, ln = _num(m.group(1)), _num(m.group(2))
+            spec.update(width=f"{_fmt(w)} m", length=f"{_fmt(ln)} m", area=f"{_fmt(w * ln)} m²")
+        if not spec["repeat"] and (m := _REPEAT_RE.search(text)):
+            spec["repeat"] = f"{m.group(1)} {m.group(2) or 'cm'}"
+    return spec
+
+
+def vendor_name(value: str | bool | None) -> str:
+    """'SANGETSU GOODRICH (0.0 m - 0 ₫)' → 'SANGETSU GOODRICH'."""
+    return re.sub(r"\s*\([^)]*\)\s*$", "", str(value or "")).strip()
+
+
+def build_acceptance(rpc, conn, picking_id: int) -> dict | None:
+    """Data for templates/acceptance_wallcovering.html (old paper form
+    "BIÊN BẢN NGHIỆM THU — Hạng mục: VẬT LIỆU DÁN TƯỜNG"). Columns Odoo does not
+    store (khu vực, vị trí, kích thước tường, check) stay blank for the site team."""
+    r = build_report(rpc, conn, picking_id)
+    if r is None:
+        return None
+    pk = rpc(conn, "stock.picking", "read", [picking_id],
+             fields=["sale_id", "x_studio_a_ch_ca_th_lin_h"], context=CTX)[0]
+    so = {}
+    so_id = _m2o_id(pk.get("sale_id"))
+    if so_id:
+        so = rpc(conn, "sale.order", "read", [so_id],
+                 fields=["origin", "user_id", "x_studio_phone"], context=CTX)[0]
+
+    product_ids = sorted({it["product_id"] for it in r["items"]} - {None})
+    products = {p["id"]: p for p in rpc(
+        conn, "product.product", "read", product_ids,
+        fields=["default_code", "description_sale", "x_studio_related_field_508_1iv5212o0"],
+        context=CTX)} if product_ids else {}
+
+    for it in r["items"]:
+        pr = products.get(it["product_id"], {})
+        it["code"] = pr.get("default_code") or it["product"]
+        it["collection"] = vendor_name(pr.get("x_studio_related_field_508_1iv5212o0"))
+        it["roll"] = roll_spec(pr.get("description_sale") or "", it["sale_line_name"])
+
+    now = datetime.now(VN_TZ)
+    r.update(
+        project=so.get("origin") or "",
+        site_address=clean_address(pk.get("x_studio_a_ch_ca_th_lin_h")) or r["partner"]["contact_address"],
+        site_phone=so.get("x_studio_phone") or r["partner"]["phone"],
+        salesperson=_m2o_name(so.get("user_id")) or r["partner"]["salesperson"],
+        day=now.strftime("%d"), month=now.strftime("%m"), year=now.strftime("%Y"),
+        header=(ORDINAIRE_HEADER if r["is_ordinaire"] else BONARIO_HEADER),
+    )
+    return r
+
+
+BONARIO_HEADER = {
+    "company": "CÔNG TY TNHH XNK BONARIO VIỆT NAM",
+    "lines": ["Showroom: 22 đường 19A, P. An Phú, TP. Thủ Đức, TP. HCM",
+              "Văn phòng: 669D Đỗ Xuân Hợp, P. Phước Long B, TP. Thủ Đức, TP. HCM",
+              "Hotline: 028 666 09009 — Website: bonario.vn"],
+}
+ORDINAIRE_HEADER = {
+    "company": "CÔNG TY TNHH NỘI THẤT ORDINAIRE VIỆT NAM",
+    "lines": ["10 Bac Nam 2 Street, 4.8-ha Residential Area, Binh Trung Ward, Ho Chi Minh City",
+              "Hotline: 028 666 09009"],
+}
+
+TEMPLATES = {
+    # ?mau=… → (builder, template, file name prefix)
+    "ban-giao": (build_report, "delivery_report.html", "Bien-ban-ban-giao"),
+    "dan-tuong": (build_acceptance, "acceptance_wallcovering.html", "Bien-ban-nghiem-thu-dan-tuong"),
+}
 
 
 # ── PDF ─────────────────────────────────────────────────────────────────────
@@ -252,7 +350,7 @@ def check_pdf_resource(url: str) -> None:
     raise ValueError(f"Blocked resource: {url[:80]}")
 
 
-def render_pdf(report: dict) -> bytes:
+def render_pdf(report: dict, template: str = "delivery_report.html") -> bytes:
     from weasyprint import HTML  # lazy: ~150ms import
     from weasyprint.urls import URLFetcher
 
@@ -261,7 +359,7 @@ def render_pdf(report: dict) -> bytes:
             check_pdf_resource(url)
             return super().fetch(url, headers)
 
-    page = render_template("delivery_report.html", r=report,
+    page = render_template(template, r=report,
                            fonts_url=FONTS_DIR.resolve().as_uri())
     return HTML(string=page, base_url=FONTS_DIR.resolve().as_uri() + "/",
                 url_fetcher=LocalOnlyFetcher(allowed_protocols={"data", "file"},
@@ -295,8 +393,12 @@ def create_blueprint(get_odoo: Callable[[], dict], rpc) -> Blueprint:
 
     @bp.get("/api/delivery/<int:picking_id>/bien-ban.pdf")
     def api_report_pdf(picking_id: int):
+        mau = request.args.get("mau", "ban-giao")
+        if mau not in TEMPLATES:
+            return jsonify(error="Mẫu biên bản không hợp lệ.", code="invalid_input"), 400
+        builder, template, prefix = TEMPLATES[mau]
         try:
-            report = build_report(rpc, get_odoo(), picking_id)
+            report = builder(rpc, get_odoo(), picking_id)
         except Exception as e:
             bp_logger().error("[Delivery] report %s failed: %s", picking_id, e)
             return jsonify(error="Không tải được dữ liệu phiếu từ Odoo, vui lòng thử lại.",
@@ -305,8 +407,8 @@ def create_blueprint(get_odoo: Callable[[], dict], rpc) -> Blueprint:
             abort(404)
         if report["state"] == "cancel":
             return jsonify(error="Phiếu đã huỷ, không in biên bản.", code="cancelled"), 409
-        pdf = render_pdf(report)
-        filename = f"Bien-ban-ban-giao_{report['picking_name'].replace('/', '-')}.pdf"
+        pdf = render_pdf(report, template)
+        filename = f"{prefix}_{report['picking_name'].replace('/', '-')}.pdf"
         return send_file(BytesIO(pdf), mimetype="application/pdf",
                          as_attachment=request.args.get("download") == "1",
                          download_name=filename)
