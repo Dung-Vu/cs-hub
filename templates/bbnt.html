@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Báo giá → Biên bản nghiệm thu · CS Hub</title>
+{% include "_hub_style.html" %}
+<style>
+.crumb { font-size: 0.8125rem; color: var(--muted); margin: 4px 4px 14px; }
+.crumb a { text-decoration: none; }
+.crumb a:hover { color: var(--text); }
+.box { padding: 24px; }
+.box h1 { font-size: 1.375rem; letter-spacing: -0.02em; }
+.box > p { margin: 6px 0 18px; color: var(--text-2); font-size: 0.875rem; line-height: 1.5; }
+.drop { display: block; border: 2px dashed var(--border-strong); border-radius: 14px; padding: 34px 18px; text-align: center; cursor: pointer; background: var(--surface-2); transition: border-color .15s, background .15s; }
+.drop:hover, .drop.over { border-color: var(--accent); background: var(--accent-tint); }
+.drop .big { font-size: 2rem; }
+.drop .name { margin-top: 8px; font-weight: 600; }
+.drop .hint { margin-top: 4px; font-size: 0.8125rem; color: var(--muted); }
+.drop input { display: none; }
+.row { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; align-items: center; }
+#status { margin-top: 16px; }
+#done { margin-top: 16px; }
+</style>
+</head>
+<body>
+{% include "_hub_bar.html" %}
+<main class="hub">
+  <div class="crumb"><a href="/">CS Hub</a> / Báo giá → Biên bản nghiệm thu</div>
+  <section class="card box">
+    <h1>📐 Chuyển báo giá thành biên bản nghiệm thu</h1>
+    <p>Tải lên file <b>PDF báo giá</b> của Sale (xuất từ Excel). Hệ thống giữ nguyên khu vực, vị trí, hình ảnh, mã sản phẩm và kích thước;
+       bỏ cột đơn giá, thành tiền và phần tổng tiền; thêm cột <b>Check</b> và phần ký nghiệm thu.</p>
+    <form id="form">
+      <label class="drop" id="drop">
+        <div class="big">📄</div>
+        <div class="name" id="fname">Bấm để chọn hoặc kéo thả file PDF báo giá vào đây</div>
+        <div class="hint">Chỉ nhận PDF, tối đa {{ max_mb }} MB</div>
+        <input type="file" id="file" accept="application/pdf,.pdf">
+      </label>
+      <div class="row">
+        <button class="btn" type="submit" id="go" disabled>Tạo biên bản</button>
+      </div>
+    </form>
+    <div id="status" hidden></div>
+    <div id="done" class="row" hidden>
+      <a class="btn" id="view" target="_blank" rel="noopener">🖨️ Xem &amp; in</a>
+      <a class="btn ghost" id="dl">Tải PDF</a>
+    </div>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+let picked = null, blobUrl = null;
+
+function setStatus(kind, msg) {
+  const el = $('status');
+  el.className = 'alert ' + kind; el.textContent = msg; el.hidden = !msg;
+}
+function pick(f) {
+  picked = f || null;
+  $('fname').textContent = picked ? picked.name : 'Bấm để chọn hoặc kéo thả file PDF báo giá vào đây';
+  $('go').disabled = !picked; $('done').hidden = true; setStatus('', '');
+}
+$('file').addEventListener('change', (e) => pick(e.target.files[0]));
+['dragenter', 'dragover'].forEach((t) => $('drop').addEventListener(t, (e) => { e.preventDefault(); $('drop').classList.add('over'); }));
+['dragleave', 'drop'].forEach((t) => $('drop').addEventListener(t, (e) => { e.preventDefault(); $('drop').classList.remove('over'); }));
+$('drop').addEventListener('drop', (e) => pick(e.dataTransfer.files[0]));
+
+$('form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (!picked) return;
+  const body = new FormData(); body.append('file', picked);
+  $('go').disabled = true; $('done').hidden = true;
+  setStatus('info', 'Đang đọc báo giá và tạo biên bản…');
+  try {
+    const res = await fetch('/api/bbnt.pdf', { method: 'POST', body });
+    if (!res.ok) {
+      let msg = 'Không tạo được biên bản, vui lòng thử lại.';
+      try { msg = (await res.json()).error || msg; } catch (_) {}
+      throw new Error(msg);
+    }
+    const blob = await res.blob();
+    if (blobUrl) URL.revokeObjectURL(blobUrl);
+    blobUrl = URL.createObjectURL(blob);
+    const name = decodeURIComponent(res.headers.get('X-Filename') || 'BBNT.pdf');
+    $('view').href = blobUrl; $('dl').href = blobUrl; $('dl').download = name;
+    $('done').hidden = false;
+    setStatus('', '');
+  } catch (err) {
+    setStatus('error', err.message);
+  } finally {
+    $('go').disabled = !picked;
+  }
+});
+</script>
+</body>
+</html>
