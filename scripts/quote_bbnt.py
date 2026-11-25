@@ -9,8 +9,10 @@ text + signatures instead of the payment terms.
 
 The PDF is parsed with PyMuPDF: tables come from the ruling lines, pictures are
 re-rendered from the exact cell area (whatever way Excel embedded them), so
-every quotation category (rèm, giấy dán tường, nội thất…) works as long as it
-keeps the usual "Khu vực … Ghi chú" table.
+every quotation category (rèm, giấy dán tường, nội thất…) works. Both layouts
+are read: the Bonario Excel quotation ("BẢNG BÁO GIÁ", Khu vực/Vị trí table) and
+the Ordinaire order printed from Odoo ("ĐƠN HÀNG / Sales Order", bilingual
+column labels) — the item table is found by its column labels, not a fixed form.
 """
 
 from __future__ import annotations
@@ -35,15 +37,28 @@ COMPANIES = {
         "vat": "0316 100 547",
     },
     "ordinaire": {
-        "legal_name": "",  # taken from the quotation header
+        "legal_name": "CÔNG TY TNHH NỘI THẤT ORDINAIRE VIETNAM",
         "address": "10 đường Bắc Nam 2, Khu nhà ở 4, 8 ha, Phường Bình Trưng, TP Hồ Chí Minh",
         "phone": "0876 001 166",
         "vat": "0319 227 968",
     },
 }
 
-DROP_COLUMNS = ("don gia", "thanh tien", "tong tien", "gia ban", "gia niem yet",
-                "chiet khau", "vat", "thue")
+# Money columns removed from the BBNT (matched on the normalised header label,
+# Vietnamese or English). "VAT" is dropped but "Vật liệu" (also "vat lieu") stays.
+DROP_COLUMN = re.compile(
+    r"^(don gia|thanh tien|tong tien|tong cong|gia ban|gia niem yet|gia goc|chiet khau|"
+    r"% ?giam gia|giam gia|so tien|thue|\(?vat\b(?! ?lieu))|unit price|discount|amount|"
+    r"\(total\)|\bprice\b")
+
+# Labels that mark the item table's header row (any 3 of them).
+HEADER_WORDS = ("khu vuc", "vi tri", "ma san pham", "ma sp", "ten san pham", "san pham",
+                "hang muc", "hinh anh", "so luong", "sl", "don vi", "dvt", "don gia",
+                "thanh tien", "ghi chu", "stt", "so thu tu", "chi tiet", "mo ta", "quy cach",
+                "kich thuoc", "thong so", "bien the", "chat lieu", "giai phap", "item",
+                "image", "quantity", "description", "note", "no.")
+TITLE_WORDS = ("bang bao gia", "bao gia", "don dat hang", "don hang", "phieu bao gia",
+               "sales order", "quotation")
 TOTAL_ROW = re.compile(r"^(tong|chiet khau|vat|thue|tam ung|thanh toan|da coc|con lai|giam gia)")
 
 
@@ -80,6 +95,7 @@ class Section:
     rows: list = field(default_factory=list)        # [[Cell]]
     ncols: int = 0
     widths: list = field(default_factory=list)      # % per kept column
+    labels: tuple = ()                              # normalised header labels (repeat detection)
 
 
 # ── helpers ────────────────────────────────────────────────────────────────
@@ -176,7 +192,7 @@ def _grid(table):
 # ── parsing ────────────────────────────────────────────────────────────────
 
 INFO_LABELS = {
-    "customer": ("khach hang",),
+    "customer": ("khach hang", "ten khach hang", "customer", "customer name"),
     "address": ("dia chi cong trinh", "dia chi"),
     "phone": ("so dien thoai", "dien thoai", "sdt"),
     "date": ("ngay",),
@@ -197,24 +213,37 @@ def _text_lines(page):
     return out
 
 
+def _label_keys(label: str) -> set:
+    """"Khách hàng/Customer name" → {"khach hang", "customer name"}."""
+    return {norm(p) for p in re.split(r"[/(]", label.replace(")", "")) if p.strip()}
+
+
 def _read_info(lines) -> dict:
     info = {}
-    for _, text, _ in lines:
+    for i, (bbox, text, _) in enumerate(lines):
         if ":" not in text:
             continue
         label, _, value = text.partition(":")
-        key = norm(label)
+        keys = _label_keys(label)
         for field_name, labels in INFO_LABELS.items():
-            if key in labels and field_name not in info and value.strip():
-                info[field_name] = value.strip()
+            if keys & set(labels) and field_name not in info and value.strip():
+                value = value.strip()
+                # An address wrapped onto the next line (same column, no label).
+                for nb, nt, _ in lines[i + 1:i + 3]:
+                    if ":" in nt or abs(nb[0] - bbox[0]) > 3 or not 0 <= nb[1] - bbox[3] < 6:
+                        break
+                    value += " " + nt
+                    bbox = nb
+                info[field_name] = value
     return info
 
 
 def _read_header(page, lines):
     """Company block, logo, title and 'Hạng mục' above the first table."""
-    title = max((ln for ln in lines if "bao gia" in norm(ln[1])), key=lambda ln: ln[2], default=None)
+    titled = [ln for ln in lines if norm(ln[1]).startswith(TITLE_WORDS)]
+    title = max(titled, key=lambda ln: ln[2], default=None)
     if title is None:
-        raise QuoteError("Không thấy tiêu đề \"BẢNG BÁO GIÁ\" trong file.")
+        raise QuoteError("Không thấy tiêu đề báo giá / đơn hàng trong file.")
     title_top = title[0][1]
     company_lines = [t for (b, t, _) in sorted(lines, key=lambda ln: ln[0][1]) if b[3] <= title_top]
     category = next((t.partition(":")[2].strip() for (b, t, _) in lines
@@ -225,8 +254,14 @@ def _read_header(page, lines):
 
 
 def _is_header_row(texts) -> bool:
-    keys = {norm(t) for t in texts if t}
-    return "khu vuc" in keys or ("vi tri" in keys and any(k.startswith("ma san pham") for k in keys))
+    """A row whose cells are mostly column labels ("Khu vực", "Tên sản phẩm
+    (Item)", "Số lượng (Quantity)"…) — at least 3 known labels."""
+    hits = 0
+    for t in texts:
+        keys = _label_keys(t.replace("\n", " ")) if t else set()
+        if any(k == w or k.startswith(w + " ") for k in keys for w in HEADER_WORDS):
+            hits += 1
+    return hits >= 3
 
 
 def _parse_table(page, table, images, sections: list[Section], info_seen: set):
@@ -274,9 +309,14 @@ def _parse_table(page, table, images, sections: list[Section], info_seen: set):
                 group, sub, sub_texts, consumed = None, row, texts, 1
             else:
                 group, sub, sub_texts, consumed = row, nxt, nxt_texts, 2
+            labels = tuple(norm(t) for t in (texts + (nxt_texts if consumed == 2 else [])))
+            if sections and sections[-1].labels == labels:
+                r += consumed  # header repeated on the next page: same table goes on
+                continue
             if not sections or sections[-1].header:
                 sections.append(Section(title=sections[-1].title if sections else ""))
             _build_header(sections[-1], ncols, xs, group, texts if group else None, sub, sub_texts)
+            sections[-1].labels = labels
             r += consumed
             continue
 
@@ -314,7 +354,7 @@ def _build_header(sec: Section, ncols, xs, group, group_texts, sub, sub_texts):
             elif t:  # "Khối" above "lượng (m2)": a wrapped label, not a group
                 labels[c0] = (t + " " + labels[c0]).strip()
     keep = [c for c in range(ncols)
-            if owner[c] == c and not any(norm(labels[c]).startswith(d) for d in DROP_COLUMNS)]
+            if owner[c] == c and not DROP_COLUMN.search(norm(labels[c]))]
     sec.ncols = ncols
     sec.keep = keep
     sec.owner = owner
@@ -403,7 +443,7 @@ def parse_quote(pdf_bytes: bytes) -> dict:
             _parse_table(page, table, images, sections, info_seen)
     sections = [s for s in sections if s.header and s.rows]
     if not sections:
-        raise QuoteError("Không đọc được bảng hạng mục (cần có cột \"Khu vực\").")
+        raise QuoteError("Không đọc được bảng sản phẩm trong file (không thấy dòng tiêu đề cột).")
 
     head = norm(" ".join(company_lines))
     kind = "ordinaire" if "ordinaire" in head else "bonario"

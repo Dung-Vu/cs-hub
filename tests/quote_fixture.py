@@ -47,6 +47,45 @@ def _png(width: int, height: int, rgb: tuple[int, int, int]) -> str:
     return "data:image/png;base64," + base64.b64encode(png).decode()
 
 
+ORDER_HEAD = """<tr><th>Số thứ tự (No.)</th><th>Tên sản phẩm (Item)</th><th>Hình ảnh (Image)</th>
+<th>Chi tiết (Description)</th><th>Số lượng (Quantity)</th><th>Đơn giá (Unit Price)</th>
+<th>% Giảm giá (Discount %)</th><th>Thành tiền đã bao gồm VAT (Total)</th><th>Ghi chú (Note)</th></tr>"""
+
+ORDER_ROW = """<tr><td>{n}</td><td>MAU-SOFA-{n}</td><td><img src="{img}" style="width:40px;height:40px"></td>
+<td>- Vật liệu: gỗ mẫu</td><td>{n} Cái</td><td>12,500,000</td><td>10</td><td>11,250,000</td><td></td></tr>"""
+
+ORDER_HTML = """<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+@page {{ size: A4 landscape; margin: 10mm; }}
+body {{ font-family: sans-serif; font-size: 9px; }}
+table {{ border-collapse: collapse; width: 100%; }}
+td, th {{ border: 1px solid #000; padding: 3px; text-align: center; }}
+h1 {{ text-align: center; font-size: 24px; margin: 4px; }} h2 {{ text-align: center; font-size: 16px; margin: 0; }}
+</style></head><body>
+<p>Store Mẫu | 1 Đường Thử, Quận Mẫu</p>
+<p>Website: www.ordinaire.example</p>
+<h1>ĐƠN HÀNG</h1><h2>Sales Order</h2>
+<p>Khách hàng/Customer name: Công Ty Khách Mẫu</p>
+<p style="margin:0">Địa chỉ/Address: 1 Đường Giả Định</p>
+<p style="margin:0">Phường Mẫu Thành phố Thử</p>
+<p>Điện thoại/Phone: 0900 000 001</p>
+<table>{head}{first}</table>
+<div style="page-break-before: always"></div>
+<table>{head}{rest}</table>
+<p>Tổng cộng (Total): 33,750,000</p>
+</body></html>"""
+
+
+def synthetic_order_pdf() -> bytes:
+    """Ordinaire-style order printed from Odoo: bilingual labels, no "Khu vực",
+    item table split across two pages with the header repeated."""
+    from weasyprint import HTML
+
+    img = _png(8, 8, (90, 160, 90))
+    rows = [ORDER_ROW.format(n=n, img=img) for n in (1, 2, 3)]
+    html = ORDER_HTML.format(head=ORDER_HEAD, first=rows[0], rest="".join(rows[1:]))
+    return HTML(string=html).write_pdf()
+
+
 def synthetic_quote_pdf() -> bytes:
     from weasyprint import HTML
 

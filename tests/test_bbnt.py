@@ -19,7 +19,7 @@ pytest.importorskip("fitz")
 
 import hub_auth  # noqa: E402
 import quote_bbnt as qb  # noqa: E402
-from quote_fixture import synthetic_quote_pdf  # noqa: E402
+from quote_fixture import synthetic_order_pdf, synthetic_quote_pdf  # noqa: E402
 from test_hub import FakeOdoo, login  # noqa: E402
 
 
@@ -83,6 +83,34 @@ def test_parse_drops_prices_and_adds_check(quote_pdf):
     assert "429" not in flat and "2.059.840" not in flat
 
 
+def test_parse_ordinaire_order_layout():
+    q = qb.parse_quote(synthetic_order_pdf())
+    assert q["kind"] == "ordinaire"
+    assert q["company"]["legal_name"] == qb.COMPANIES["ordinaire"]["legal_name"]
+    assert q["info"]["customer"] == "Công Ty Khách Mẫu"
+    assert q["info"]["address"] == "1 Đường Giả Định Phường Mẫu Thành phố Thử"
+    assert q["info"]["phone"] == "0900 000 001"
+
+    (sec,) = q["sections"]  # header repeated on page 2 continues the same table
+    assert [h.text for h in sec.header] == [
+        "Số thứ tự (No.)", "Tên sản phẩm (Item)", "Hình ảnh (Image)", "Chi tiết (Description)",
+        "Số lượng (Quantity)", "Check", "Ghi chú (Note)"]
+    assert [r[1].text for r in sec.rows] == ["MAU-SOFA-1", "MAU-SOFA-2", "MAU-SOFA-3"]
+    assert all(r[2].image and r[2].image.startswith("data:image/png") for r in sec.rows)
+    assert sec.rows[0][3].text == "- Vật liệu: gỗ mẫu"  # "Vật liệu" is not the VAT column
+    flat = " ".join(c.text for r in sec.rows for c in r)
+    assert "12.500.000" not in flat and "11.250.000" not in flat
+
+
+@pytest.mark.parametrize("label, dropped", [
+    ("Đơn giá", True), ("Thành Tiền", True), ("% Giảm giá (Discount %)", True),
+    ("Đơn giá (Unit Price)", True), ("Thành tiền đã bao gồm VAT (Total)", True), ("VAT", True),
+    ("Thuế GTGT", True), ("Vật liệu", False), ("Số lượng (Quantity)", False), ("Ghi chú (Note)", False),
+])
+def test_money_columns_dropped(label, dropped):
+    assert bool(qb.DROP_COLUMN.search(qb.norm(label))) is dropped
+
+
 @pytest.mark.parametrize("data, msg", [
     (b"not a pdf", "PDF"),
 ])
@@ -93,9 +121,9 @@ def test_parse_rejects_garbage(data, msg):
 
 def test_parse_requires_title_and_table():
     from weasyprint import HTML
-    with pytest.raises(qb.QuoteError, match="BÁO GIÁ"):
+    with pytest.raises(qb.QuoteError, match="báo giá / đơn hàng"):
         qb.parse_quote(HTML(string="<p>Hoá đơn</p>").write_pdf())
-    with pytest.raises(qb.QuoteError, match="Khu vực"):
+    with pytest.raises(qb.QuoteError, match="bảng sản phẩm"):
         qb.parse_quote(HTML(string="<h1>BẢNG BÁO GIÁ</h1><p>Khách hàng: A</p>").write_pdf())
 
 
