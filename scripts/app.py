@@ -8,7 +8,7 @@ import os
 import sys
 from pathlib import Path
 
-from flask import Flask, jsonify, render_template
+from flask import Flask, jsonify, redirect, render_template
 
 BASE_DIR = Path(__file__).parent.parent
 sys.path.insert(0, str(Path(__file__).parent))
@@ -56,14 +56,18 @@ def health():
 
 
 from hub_auth import init_auth  # noqa: E402
-from delivery_report import create_blueprint as create_delivery_blueprint  # noqa: E402
 from quote_bbnt import create_blueprint as create_bbnt_blueprint  # noqa: E402
 from zns_proxy import create_blueprint as create_zns_blueprint  # noqa: E402
 
 init_auth(app, get_odoo=get_odoo, rpc=rpc_execute)
-app.register_blueprint(create_delivery_blueprint(get_odoo, rpc_execute))
 app.register_blueprint(create_bbnt_blueprint())
 app.register_blueprint(create_zns_blueprint())
+
+
+@app.get("/bien-ban")
+def old_delivery_report():
+    # BBNT is now built from the quotation (Helpdesk #1684); keep old bookmarks working.
+    return redirect("/bbnt", code=301)
 
 
 if __name__ == "__main__":
