@@ -86,6 +86,68 @@ def synthetic_order_pdf() -> bytes:
     return HTML(string=html).write_pdf()
 
 
+GROUPED_QUOTE_HTML = """<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+@page {{ size: A4 landscape; margin: 10mm; }}
+body {{ font-family: sans-serif; font-size: 8px; }}
+table {{ border-collapse: collapse; width: 100%; }}
+td, th {{ border: 1px solid #000; padding: 3px; text-align: center; }}
+h1 {{ text-align: center; font-size: 20px; margin: 4px; }}
+</style></head><body>
+<img src="{logo}" style="width:80px;height:40px">
+<p><b>CÔNG TY TNHH XNK BONARIO VIỆT NAM</b></p>
+<p>Office: 1 Đường Thử, TP.HCM</p>
+<h1>BẢNG BÁO GIÁ</h1>
+<p>Hạng mục: Rèm cửa</p>
+<p>Khách hàng: CÔNG TY MẪU</p>
+<p>Địa chỉ Công trình: 1 Đường Giả Định</p>
+<p>Số điện thoại: 0900 000 002</p>
+<table>
+<tr><th colspan="15">RÈM CỬA</th></tr>
+<tr>
+  <th rowspan="2">Khu Vực</th><th rowspan="2">Vị trí</th><th rowspan="2">Sơ Đồ/ Hình ảnh</th>
+  <th rowspan="2">Giải Pháp</th><th rowspan="2">Mã Sản Phẩm</th><th rowspan="2">Khổ vải (m)</th>
+  <th colspan="4">Thông số kích thước</th><th rowspan="2">Số lượng</th>
+  <th rowspan="2">Khối lượng (m2)</th><th rowspan="2">Đơn giá</th><th rowspan="2">Thành Tiền</th><th rowspan="2">Ghi chú</th>
+</tr>
+<tr><th>Quy cách</th><th>Ngang (m)</th><th>Cao (m)</th><th>Số tấm/cửa</th></tr>
+<tr><td colspan="15">Tầng trệt</td></tr>
+<tr><td colspan="15">Phòng họp nhỏ</td></tr>
+<tr>
+  <td rowspan="2">Ô kính mặt tiền</td><td>1</td>
+  <td rowspan="2"><img src="{photo}" style="width:50px;height:40px"></td>
+  <td rowspan="2">Rèm cuốn</td><td rowspan="2">FC18</td><td>3</td>
+  <td>Lọt lòng</td><td>1,32</td><td>2,00</td><td>1 tấm/cửa</td><td>1</td><td>3,68</td><td>620.000</td><td>2.281.000</td><td></td>
+</tr>
+<tr>
+  <td>2</td><td>3</td>
+  <td>Lọt lòng</td><td>1,84</td><td>2,00</td><td>1 tấm/cửa</td><td>1</td><td>3,68</td><td>620.000</td><td>2.281.000</td><td></td>
+</tr>
+<tr><td colspan="10">TỔNG SỐ LƯỢNG RÈM</td><td>2</td><td>7,36</td><td></td><td></td><td></td></tr>
+<tr><td colspan="13">TỔNG TIỀN RÈM CỬA</td><td>4.562.000</td><td></td></tr>
+<tr><td colspan="13">CHIẾT KHẤU 20% RÈM CỬA</td><td>912.400</td><td></td></tr>
+<tr><td colspan="13">PHỤ PHÍ THI CÔNG ĐƠN DƯỚI 10 TRIỆU</td><td>500.000</td><td></td></tr>
+<tr><td colspan="13">VAT 8%</td><td>331.968</td><td></td></tr>
+</table>
+<div style="page-break-before: always"></div>
+<table>
+<tr><td>TẠM ỨNG 50% KHI XÁC NHẬN ĐẶT HÀNG</td><td>1.970.784</td><td></td></tr>
+<tr><td>CÒN LẠI SAU KHI HOÀN TẤT CÔNG TRÌNH</td><td>1.166.314</td><td></td></tr>
+</table>
+</body></html>"""
+
+
+def synthetic_curtain_grouped_pdf() -> bytes:
+    """Bonario curtain quote with sub-header banners below the column header,
+    vertical rowspans on item rows, surcharge rows, and a page-2 payment table."""
+    from weasyprint import HTML
+
+    html = GROUPED_QUOTE_HTML.format(
+        logo=_png(16, 8, (200, 120, 60)),
+        photo=_png(10, 8, (80, 130, 180)),
+    )
+    return HTML(string=html).write_pdf()
+
+
 def synthetic_quote_pdf() -> bytes:
     from weasyprint import HTML
 

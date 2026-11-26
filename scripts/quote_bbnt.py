@@ -59,7 +59,11 @@ HEADER_WORDS = ("khu vuc", "vi tri", "ma san pham", "ma sp", "ten san pham", "sa
                 "image", "quantity", "description", "note", "no.")
 TITLE_WORDS = ("bang bao gia", "bao gia", "don dat hang", "don hang", "phieu bao gia",
                "sales order", "quotation")
-TOTAL_ROW = re.compile(r"^(tong|chiet khau|vat|thue|tam ung|thanh toan|da coc|con lai|giam gia)")
+TOTAL_ROW = re.compile(
+    r"^(tong|chiet khau|vat|thue|tam ung|thanh toan|da coc|dat coc|tien coc|con lai|"
+    r"giam gia|phu phi|chi phi|phi |khuyen mai|uu dai|thanh tien|sub ?total|total|"
+    r"grand total|discount|surcharge|deposit|balance)")
+_NUMERIC_CELL = re.compile(r"[\d.,\s%₫đĐ/\-]+(?:\s*(?:vnd|vnđ|usd|\$))?", re.I)
 
 
 class QuoteError(ValueError):
@@ -84,6 +88,8 @@ class Cell:
     image: str | None = None  # data URI
     colspan: int = 1
     rowspan: int = 1
+    is_group: bool = False
+    is_first: bool = False
 
 
 @dataclass
@@ -264,17 +270,45 @@ def _is_header_row(texts) -> bool:
     return hits >= 3
 
 
+def _is_summary_row(texts, full_width: bool) -> bool:
+    first = norm(texts[0]) if texts else ""
+    rest = texts[1:]
+    numeric_rest = all(not t or _NUMERIC_CELL.fullmatch(t) for t in rest)
+    if TOTAL_ROW.match(first) and numeric_rest:
+        return True
+    # Full-width merged label row whose trailing cells hold amounts (e.g. surcharge/fee rows).
+    return bool(full_width and any(rest) and numeric_rest)
+
+
+def _header_plan(page, by_row, r: int):
+    """If row r starts a column header (1- or 2-row), return (group, group_texts, sub, sub_texts, consumed, labels)."""
+    row = sorted(by_row.get(r, []), key=lambda c: c[1])
+    if not row:
+        return None
+    texts = [_cell_text(page, c[4]) for c in row]
+    nxt = sorted(by_row.get(r + 1, []), key=lambda c: c[1])
+    nxt_texts = [_cell_text(page, c[4]) for c in nxt]
+    if not (_is_header_row(texts) or (nxt and _is_header_row(nxt_texts) and not _is_header_row(texts))):
+        return None
+    tall = any(c[2] - c[0] > 1 for c in row) and any(c[3] - c[1] > 1 for c in row)
+    if _is_header_row(texts) and tall and nxt:
+        group, group_texts, sub, sub_texts, consumed = row, texts, nxt, nxt_texts, 2
+    elif _is_header_row(texts):
+        group, group_texts, sub, sub_texts, consumed = None, None, row, texts, 1
+    else:
+        group, group_texts, sub, sub_texts, consumed = row, texts, nxt, nxt_texts, 2
+    labels = tuple(norm(t) for t in (texts + (nxt_texts if consumed == 2 else [])))
+    return group, group_texts, sub, sub_texts, consumed, labels
+
+
 def _parse_table(page, table, images, sections: list[Section], info_seen: set):
     xs, ys, cells = _grid(table)
     nrows, ncols = len(ys) - 1, len(xs) - 1
     by_row: dict[int, list] = {}
     for c in cells:
         by_row.setdefault(c[0], []).append(c)
-    covered = set()
-    for r0, c0, r1, c1, _ in cells:
-        for r in range(r0 + 1, r1):
-            covered.add(r)
 
+    active_spans: dict[int, tuple[Cell, int]] = {}
     r = 0
     while r < nrows:
         row = sorted(by_row.get(r, []), key=lambda c: c[1])
@@ -282,55 +316,58 @@ def _parse_table(page, table, images, sections: list[Section], info_seen: set):
             r += 1
             continue
         texts = [_cell_text(page, c[4]) for c in row]
-        full_width = len(row) == 1 or (row[0][3] - row[0][1]) >= ncols - 3
-        first = norm(texts[0])
+        full_width = len(row) == 1 or (row[0][3] - row[0][1]) >= max(2, ncols - 3)
 
         if full_width:
+            active_spans.clear()
             joined = " ".join(t for t in texts if t)
-            if not joined or ":" in texts[0] or norm(joined) in info_seen:
+            if not joined or ":" in texts[0] or norm(joined) in info_seen or _is_summary_row(texts, full_width=True):
                 r += 1
                 continue
-            if TOTAL_ROW.match(first):
+            banner = texts[0].replace("\n", " ")
+            next_hdr = _header_plan(page, by_row, r + 1)
+            active = sections[-1] if sections and sections[-1].header else None
+            if active is not None and next_hdr is None:
+                # Sub-header inside an already-open item table (e.g. "Tầng trệt", "Phòng họp nhỏ").
+                if abs(ncols - active.ncols) <= 1:
+                    active.rows.append([Cell(text=banner, colspan=len(active.widths), is_group=True)])
                 r += 1
                 continue
-            sections.append(Section(title=texts[0].replace("\n", " ")))
+            if active is not None and next_hdr is not None and norm(banner) == norm(active.title) and next_hdr[5] == active.labels:
+                # Repeated section banner + header on the next page: continue the same table.
+                r += 1
+                continue
+            sections.append(Section(title=banner))
             r += 1
             continue
 
-        # Header: the row that holds "Khu vực", plus the group row right above it.
-        nxt = sorted(by_row.get(r + 1, []), key=lambda c: c[1])
-        nxt_texts = [_cell_text(page, c[4]) for c in nxt]
-        if _is_header_row(texts) or (nxt and _is_header_row(nxt_texts) and not _is_header_row(texts)):
-            tall = any(c[2] - c[0] > 1 for c in row) and any(c[3] - c[1] > 1 for c in row)
-            if _is_header_row(texts) and tall and nxt:
-                # "Khu vực" spans two rows; the row below holds the group's sub-labels.
-                group, sub, sub_texts, consumed = row, nxt, nxt_texts, 2
-            elif _is_header_row(texts):
-                group, sub, sub_texts, consumed = None, row, texts, 1
-            else:
-                group, sub, sub_texts, consumed = row, nxt, nxt_texts, 2
-            labels = tuple(norm(t) for t in (texts + (nxt_texts if consumed == 2 else [])))
+        # Header: the row that holds known column labels, plus any group row right above/below it.
+        hdr = _header_plan(page, by_row, r)
+        if hdr is not None:
+            active_spans.clear()
+            group, group_texts, sub, sub_texts, consumed, labels = hdr
             if sections and sections[-1].labels == labels:
                 r += consumed  # header repeated on the next page: same table goes on
                 continue
             if not sections or sections[-1].header:
                 sections.append(Section(title=sections[-1].title if sections else ""))
-            _build_header(sections[-1], ncols, xs, group, texts if group else None, sub, sub_texts)
+            _build_header(sections[-1], ncols, xs, group, group_texts, sub, sub_texts)
             sections[-1].labels = labels
             r += consumed
             continue
 
         sec = sections[-1] if sections and sections[-1].header else None
-        if sec is None:
+        if sec is None or abs(ncols - sec.ncols) > 1:
             r += 1
             continue
-        if TOTAL_ROW.match(first) and all(not t or re.fullmatch(r"[\d.,\s%-]+", t) for t in texts[1:]):
+        if _is_summary_row(texts, full_width=False):
+            active_spans.clear()
             r += 1
             continue
         if not any(texts) and not any(_cell_image(page, c[4], images) for c in row):
             r += 1
             continue
-        sec.rows.append(_build_row(sec, page, row, texts, images, ncols))
+        sec.rows.append(_build_row(sec, page, r, row, texts, images, active_spans))
         r += 1
 
 
@@ -390,34 +427,53 @@ def _build_header(sec: Section, ncols, xs, group, group_texts, sub, sub_texts):
     sec.header, sec.sub_header, sec.group_row = header, sub_header, group_row
 
 
-def _build_row(sec: Section, page, row, texts, images, ncols):
+def _build_row(sec: Section, page, r: int, row, texts, images, active_spans: dict):
+    for col in [k for k, (_, end_r) in active_spans.items() if end_r <= r]:
+        del active_spans[col]
+
     out = []
     keep = sec.keep
     cells_by_col = {c[1]: (c, t) for c, t in zip(row, texts)}
+    bumped: set[int] = set()
+    h_covered: set[int] = set()
+
     for i, c in enumerate(keep):
         if i == sec.check_at:
             out.append(Cell(""))
+        if c in h_covered:
+            continue
         hit = cells_by_col.get(c)
         if hit is None:
-            # covered by a vertical merge from an earlier row, or blank
-            out.append(Cell(""))
+            if c in active_spans:
+                origin, _ = active_spans[c]
+                if id(origin) not in bumped:
+                    origin.rowspan += 1
+                    bumped.add(id(origin))
+                continue
+            out.append(Cell("", is_first=(i == 0)))
             continue
+        active_spans.pop(c, None)
         (r0, c0, r1, c1, bbox), text = hit
-        span = len([k for k in keep if c0 <= k < c1]) or 1
-        cell = Cell(text=vn_number(text), image=_cell_image(page, bbox, images), colspan=span)
+        if i < sec.check_at < len(keep):
+            covered_cols = [k for k in keep[i:sec.check_at] if c0 <= k < c1] or [c]
+        else:
+            covered_cols = [k for k in keep[i:] if c0 <= k < c1] or [c]
+        for k in covered_cols[1:]:
+            h_covered.add(k)
+            active_spans.pop(k, None)
+        cell = Cell(
+            text=vn_number(text),
+            image=_cell_image(page, bbox, images),
+            colspan=len(covered_cols),
+            is_first=(i == 0),
+        )
         out.append(cell)
+        if r1 > r + 1:
+            for k in covered_cols:
+                active_spans[k] = (cell, r1)
     if sec.check_at == len(keep):
         out.append(Cell(""))
-    # drop placeholders swallowed by a colspan
-    result, skip = [], 0
-    for cell in out:
-        if skip:
-            skip -= 1
-            if not cell.text and not cell.image:
-                continue
-        result.append(cell)
-        skip = cell.colspan - 1
-    return result
+    return out
 
 
 def parse_quote(pdf_bytes: bytes) -> dict:
@@ -441,7 +497,10 @@ def parse_quote(pdf_bytes: bytes) -> dict:
         images = [tuple(im["bbox"]) for im in page.get_image_info()]
         for table in page.find_tables().tables:
             _parse_table(page, table, images, sections, info_seen)
-    sections = [s for s in sections if s.header and s.rows]
+    for s in sections:
+        while s.rows and s.rows[-1][0].is_group:
+            s.rows.pop()
+    sections = [s for s in sections if s.header and any(not r[0].is_group for r in s.rows)]
     if not sections:
         raise QuoteError("Không đọc được bảng sản phẩm trong file (không thấy dòng tiêu đề cột).")
 
@@ -480,7 +539,9 @@ def render_pdf(quote: dict) -> bytes:
             check_pdf_resource(url)
             return super().fetch(url, headers)
 
-    page = render_template("bbnt_from_quote.html", q=quote, orientation="portrait",
+    max_cols = max((len(s.widths) for s in quote["sections"]), default=0)
+    orientation = "landscape" if max_cols > 10 else "portrait"
+    page = render_template("bbnt_from_quote.html", q=quote, orientation=orientation,
                            fonts_url=FONTS_DIR.resolve().as_uri())
     return HTML(string=page, base_url=FONTS_DIR.resolve().as_uri() + "/",
                 url_fetcher=LocalOnlyFetcher(allowed_protocols={"data", "file"},
@@ -491,7 +552,8 @@ def output_name(filename: str) -> str:
     stem = re.sub(r"\.pdf$", "", filename or "", flags=re.I)
     stem = re.sub(r"(?i)\b(bonario\s+)?(quotation|bao gia|báo giá)\b", "", stem)
     stem = re.sub(r"[^\w\- ]+", "", stem, flags=re.UNICODE)
-    stem = re.sub(r"\s+", " ", stem).strip(" -_")
+    stem = re.sub(r"\s+", " ", stem)
+    stem = re.sub(r"\s*-\s*(?:-\s*)+", " - ", stem).strip(" -_")
     return f"BBNT - {stem}.pdf" if stem else "BBNT.pdf"
 
 

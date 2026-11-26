@@ -19,7 +19,7 @@ pytest.importorskip("fitz")
 
 import hub_auth  # noqa: E402
 import quote_bbnt as qb  # noqa: E402
-from quote_fixture import synthetic_order_pdf, synthetic_quote_pdf  # noqa: E402
+from quote_fixture import synthetic_curtain_grouped_pdf, synthetic_order_pdf, synthetic_quote_pdf  # noqa: E402
 from test_hub import FakeOdoo, login  # noqa: E402
 
 
@@ -52,6 +52,7 @@ def test_vn_number_swaps_separators_only_for_numbers():
 
 def test_output_name_strips_quotation_words():
     assert qb.output_name("Bonario Quotation - S01234.pdf") == "BBNT - S01234.pdf"
+    assert qb.output_name("121126 - Bonario Quotation - Curtains - Rev1.pdf") == "BBNT - 121126 - Curtains - Rev1.pdf"
     assert qb.output_name("Báo giá Rèm phòng ngủ.PDF") == "BBNT - Rèm phòng ngủ.pdf"
     assert qb.output_name("../../x<>.pdf") == "BBNT - x.pdf"
     assert qb.output_name("") == "BBNT.pdf"
@@ -100,6 +101,43 @@ def test_parse_ordinaire_order_layout():
     assert sec.rows[0][3].text == "- Vật liệu: gỗ mẫu"  # "Vật liệu" is not the VAT column
     flat = " ".join(c.text for r in sec.rows for c in r)
     assert "12.500.000" not in flat and "11.250.000" not in flat
+
+
+def test_parse_subheaders_rowspan_and_surcharge():
+    q = qb.parse_quote(synthetic_curtain_grouped_pdf())
+    (sec,) = q["sections"]
+    assert sec.title == "RÈM CỬA"
+    assert len(sec.widths) == 14  # 15 cols - 2 price cols + 1 Check col
+    assert len(sec.rows) == 4  # 2 sub-headers + 2 item rows (totals, surcharge, payment table dropped)
+
+    assert sec.rows[0][0].is_group and sec.rows[0][0].text == "Tầng trệt" and sec.rows[0][0].colspan == 14
+    assert sec.rows[1][0].is_group and sec.rows[1][0].text == "Phòng họp nhỏ" and sec.rows[1][0].colspan == 14
+
+    r1, r2 = sec.rows[2], sec.rows[3]
+    assert len(r1) == 14 and len(r2) == 10  # 4 columns merged vertically from r1
+    assert r1[0].text == "Ô kính mặt tiền" and r1[0].rowspan == 2 and r1[0].is_first
+    assert r1[2].image and r1[2].image.startswith("data:image/png") and r1[2].rowspan == 2
+    assert r1[3].text == "Rèm cuốn" and r1[3].rowspan == 2
+    assert r1[4].text == "FC18" and r1[4].rowspan == 2
+    assert r2[0].text == "2" and not r2[0].is_first  # Vị trí cell, not Khu Vực
+
+    flat = " ".join(c.text for r in sec.rows for c in r)
+    assert "PHỤ PHÍ" not in flat and "500.000" not in flat and "620.000" not in flat and "TẠM ỨNG" not in flat
+
+
+@needs_fetcher
+def test_render_pdf_uses_landscape_for_wide_table():
+    import fitz
+    from flask import Flask
+    app = Flask(__name__, template_folder=str(ROOT / "templates"))
+    with app.app_context():
+        pdf = qb.render_pdf(qb.parse_quote(synthetic_curtain_grouped_pdf()))
+    doc = fitz.open(stream=pdf, filetype="pdf")
+    assert doc.page_count == 1
+    assert doc[0].rect.width > doc[0].rect.height  # wide table auto-switches to A4 landscape
+    text = doc[0].get_text()
+    assert "Tầng trệt" in text and "Phòng họp nhỏ" in text and "Ô kính mặt tiền" in text
+    assert "PHỤ PHÍ" not in text and "500.000" not in text
 
 
 @pytest.mark.parametrize("label, dropped", [
